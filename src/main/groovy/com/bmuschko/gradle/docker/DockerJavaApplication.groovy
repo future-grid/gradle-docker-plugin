@@ -22,11 +22,33 @@ class DockerJavaApplication {
     Integer port = 8080
     Set<Integer> ports = []
     String tag
-    String healthcheckScript = ''
-    String healthcheck = ''
-
+    String healthcheckScript
+    String initCommand
+    String user
+    Set<String> resources = []
+    Set<String> resourcesConfig = []
     Integer[] getPorts() {
         return ports.size() > 0 ? ports : [port]
     }
+    String[] getResourcesConfig(){
+        return resourcesConfig.size() > 0 ? resourcesConfig : null
+    }
+
+    boolean isHealthcheck(){
+        return healthcheckScript == null ? false : true
+    }
+
+    boolean isInitCommand(){
+        return initCommand == null ? false : true
+    }
+
+    boolean isResourcesConfig(){
+        return resourcesConfig.size() > 0 ? true : false
+    }
+
+    boolean isUser(){
+        return user == null ? false: true
+    }
+
 
 }

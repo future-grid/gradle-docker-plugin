@@ -35,7 +35,9 @@ class Dockerfile extends DefaultTask {
 
         getDestFile().withWriter { out ->
             getInstructions().each { instruction ->
-                out.println instruction.build()
+                if (instruction.build() != null) {
+                    out.println instruction.build()
+                }
             }
         }
     }
@@ -124,6 +126,10 @@ class Dockerfile extends DefaultTask {
         instructions << new HealthCheckInstruction(script)
     }
 
+
+    void healthcheck(Closure script) {
+        instructions << new HealthCheckInstruction(script)
+    }
 
     /**
      * The <a href="https://docs.docker.com/reference/builder/#maintainer">MAINTAINER instruction</a> allows you to set
@@ -268,6 +274,10 @@ class Dockerfile extends DefaultTask {
      */
     void copyFile(Closure src, Closure dest) {
         instructions << new CopyFileInstruction(src, dest)
+    }
+
+    void copyFile(Closure src) {
+        instructions << new CopyFileInstruction(src)
     }
 
     /**
@@ -442,9 +452,14 @@ class Dockerfile extends DefaultTask {
         @Override
         String build() {
             if (command instanceof String) {
-                "$keyword $command"
+                if(command!=null){
+                    "$keyword $command"
+                }
             } else if (command instanceof Closure) {
-                "$keyword ${command()}"
+                if(command()!=null){
+                    "$keyword ${command()}"
+                }
+
             }
         }
     }
@@ -540,12 +555,23 @@ class Dockerfile extends DefaultTask {
             this.dest = dest
         }
 
+        FileInstruction(Closure src) {
+            this.src = src
+        }
+
+
         @Override
         String build() {
             if (src instanceof String && dest instanceof String) {
                 "$keyword $src $dest"
             } else if (src instanceof Closure && dest instanceof Closure) {
                 "$keyword ${src()} ${dest()}"
+            } else if (src instanceof Closure) {
+                def evaluatedResources = src()
+                if (evaluatedResources != null) {
+                    keyword + ' ["' + evaluatedResources.join('", "') + '"]'
+                }
+
             }
         }
     }
@@ -714,6 +740,11 @@ class Dockerfile extends DefaultTask {
         CopyFileInstruction(Closure src, Closure dest) {
             super(src, dest)
         }
+
+        CopyFileInstruction(Closure src) {
+            super(src)
+        }
+
 
         @Override
         String getKeyword() {

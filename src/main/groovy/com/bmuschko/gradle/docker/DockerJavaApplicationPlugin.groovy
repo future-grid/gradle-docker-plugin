@@ -18,6 +18,7 @@ package com.bmuschko.gradle.docker
 import com.bmuschko.gradle.docker.tasks.image.DockerBuildImage
 import com.bmuschko.gradle.docker.tasks.image.DockerPushImage
 import com.bmuschko.gradle.docker.tasks.image.Dockerfile
+import groovy.util.logging.Slf4j
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.plugins.ApplicationPlugin
@@ -28,12 +29,12 @@ import org.gradle.util.ConfigureUtil
 /**
  * Opinionated Gradle plugin for creating and pushing a Docker image for a Java application.
  */
+@Slf4j
 class DockerJavaApplicationPlugin implements Plugin<Project> {
     public static final String COPY_DIST_RESOURCES_TASK_NAME = 'dockerCopyDistResources'
     public static final String DOCKERFILE_TASK_NAME = 'dockerDistTar'
     public static final String BUILD_IMAGE_TASK_NAME = 'dockerBuildImage'
     public static final String PUSH_IMAGE_TASK_NAME = 'dockerPushImage'
-    public static final String HEALTHCHECKFILE_TASK_NAME = 'dockerHealthCheck'
 
     @Override
     void apply(Project project) {
@@ -41,14 +42,11 @@ class DockerJavaApplicationPlugin implements Plugin<Project> {
 
         DockerExtension dockerExtension = project.extensions.getByType(DockerExtension)
         DockerJavaApplication dockerJavaApplication = configureExtension(dockerExtension)
-
         project.plugins.withType(ApplicationPlugin) {
             Tar tarTask = project.tasks.getByName(ApplicationPlugin.TASK_DIST_TAR_NAME)
-
-            Dockerfile createDockerfileTask = createDockerfileTask(project, tarTask, dockerJavaApplication)
-            Copy copyTarTask = createDistCopyResourcesTask(project, tarTask, createDockerfileTask)
-            Copy copyHealthCheckTask = copyHealthCheckTask(project, copyTarTask, createDockerfileTask)
-            createDockerfileTask.dependsOn copyHealthCheckTask
+            Copy copyResources = createDistCopyResourcesTask(project, tarTask, dockerJavaApplication)
+            Dockerfile createDockerfileTask = createDockerfileTask(project, tarTask, copyResources,
+                    dockerJavaApplication)
             DockerBuildImage dockerBuildImageTask = createBuildImageTask(project, createDockerfileTask, dockerJavaApplication)
             createPushImageTask(project, dockerBuildImageTask)
         }
@@ -70,45 +68,36 @@ class DockerJavaApplicationPlugin implements Plugin<Project> {
         dockerJavaApplication
     }
 
-    private Dockerfile createDockerfileTask(Project project, Tar tarTask, DockerJavaApplication dockerJavaApplication) {
+    private Dockerfile createDockerfileTask(Project project, Tar tarTask, Copy copyResources, DockerJavaApplication
+            dockerJavaApplication) {
         project.task(DOCKERFILE_TASK_NAME, type: Dockerfile) {
             description = 'Creates the Docker image for the Java application.'
-            dependsOn tarTask
+            dependsOn copyResources
             from { dockerJavaApplication.baseImage }
             maintainer { dockerJavaApplication.maintainer }
-            copyFile({ tarTask.archivePath.name }, { '/' })
-            runCommand("mkdir -p /$project.applicationName && tar -xf /$tarTask.archiveName -C /$project.applicationName --strip-components=1")
-            copyFile({ 'healthcheck.sh' }, { '/' })
-            runCommand('chmod +x /healthcheck.sh')
-            healthcheck('--interval=30s --timeout=3s --retries=3 CMD /healthcheck.sh')
+            addFile({ tarTask.archivePath.name }, { '/' })
+            copyFile({ dockerJavaApplication.getResourcesConfig() })
+            runCommand({ dockerJavaApplication.initCommand })
+            healthcheck({ dockerJavaApplication.healthcheckScript })
             entryPoint { determineEntryPoint(project, tarTask) }
             exposePort { dockerJavaApplication.getPorts() }
+            user { dockerJavaApplication.user }
         }
     }
 
 
-    private Copy createDistCopyResourcesTask(Project project, Tar tarTask, Dockerfile createDockerfileTask) {
+    private Copy createDistCopyResourcesTask(Project project, Tar tarTask, DockerJavaApplication
+            dockerJavaApplication) {
         project.task(COPY_DIST_RESOURCES_TASK_NAME, type: Copy) {
             group = DockerRemoteApiPlugin.DEFAULT_TASK_GROUP
             description = "Copies the distribution resources to a temporary directory for image creation."
             dependsOn tarTask
             from { tarTask.archivePath }
-            into { createDockerfileTask.destFile.parentFile }
+            from { dockerJavaApplication.resources }
+            into { "$project.buildDir/docker/" }
         }
     }
 
-    private Copy copyHealthCheckTask(Project project, Copy copyTarTask, Dockerfile createDockerfileTask) {
-        /**
-         * add health-check script
-         */
-        project.task(HEALTHCHECKFILE_TASK_NAME, type: Copy) {
-            group = DockerRemoteApiPlugin.DEFAULT_TASK_GROUP
-            description = "Copies the health check script to a temporary directory for image creation."
-            dependsOn copyTarTask
-            from { './docker/healthcheck.sh' }
-            into { createDockerfileTask.destFile.parentFile }
-        }
-    }
 
     private String determineEntryPoint(Project project, Tar tarTask) {
         String installDir = tarTask.archiveName - ".${tarTask.extension}" - "-${project.version}"
